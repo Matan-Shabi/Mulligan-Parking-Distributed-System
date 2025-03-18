@@ -1,0 +1,7 @@
+Custom License
+
+Copyright (c) 2025 Matan Shabi
+
+All Rights Reserved.
+
+This software is provided for educational purposes only. Unauthorized copying, modification, distribution, or use of this code, via any medium, is strictly prohibited.

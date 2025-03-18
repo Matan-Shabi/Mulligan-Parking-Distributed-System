@@ -1,0 +1,224 @@
+name: Java CI with MongoDB and RabbitMQ
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  # Database Configuration for a local or self-hosted MongoDB instance
+  MONGODB_URI: "mongodb://localhost:27017"    # Change to your MongoDB URI as needed
+  MONGODB_DATABASE: "parking_system"
+
+  # RabbitMQ Cluster Configuration
+  RABBITMQ_ERLANG_COOKIE: ${{ secrets.RABBITMQ_ERLANG_COOKIE }}
+  RABBITMQ_USER: "Jamal"
+  RABBITMQ_PASS: "Jamal"
+  RABBITMQ_HOST: "localhost"
+  RABBITMQ_PORT: "5672"
+
+  # Java and Gradle versions
+  JAVA_VERSION: '19'
+  GRADLE_VERSION: '8.11.1'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    services:
+      rabbitmq1:
+        image: rabbitmq:3-management
+        ports:
+          - 5672:5672
+          - 15672:15672
+        env:
+          RABBITMQ_ERLANG_COOKIE: ${{ env.RABBITMQ_ERLANG_COOKIE }}
+          RABBITMQ_DEFAULT_USER: ${{ env.RABBITMQ_USER }}
+          RABBITMQ_DEFAULT_PASS: ${{ env.RABBITMQ_PASS }}
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      rabbitmq2:
+        image: rabbitmq:3-management
+        ports:
+          - 5673:5672
+          - 15673:15672
+        env:
+          RABBITMQ_ERLANG_COOKIE: ${{ env.RABBITMQ_ERLANG_COOKIE }}
+          RABBITMQ_DEFAULT_USER: ${{ env.RABBITMQ_USER }}
+          RABBITMQ_DEFAULT_PASS: ${{ env.RABBITMQ_PASS }}
+
+      rabbitmq3:
+        image: rabbitmq:3-management
+        ports:
+          - 5674:5672
+          - 15674:15672
+        env:
+          RABBITMQ_ERLANG_COOKIE: ${{ env.RABBITMQ_ERLANG_COOKIE }}
+          RABBITMQ_DEFAULT_USER: ${{ env.RABBITMQ_USER }}
+          RABBITMQ_DEFAULT_PASS: ${{ env.RABBITMQ_PASS }}
+
+      mongodb:
+        image: mongo:6
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ ping: 1 })'" 
+          --health-interval 10s 
+          --health-timeout 5s 
+          --health-retries 5
+
+    steps:
+      # Checkout code
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Set up JDK
+      - name: Set up JDK 19
+        uses: actions/setup-java@v4
+        with:
+          java-version: '19'
+          distribution: 'liberica'
+
+      # Set up Gradle
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      # Cache Gradle Dependencies
+      - name: Cache Gradle Dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/caches
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # Install Required GUI Libraries for JavaFX
+      - name: Install GUI dependencies for JavaFX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-0 libglib2.0-0 libgl1
+
+      # Set GDK_BACKEND environment variable
+      - name: Set Graphics Backend
+        run: echo "export GDK_BACKEND=x11" >> $GITHUB_ENV
+
+      # Set up Virtual Display (Xvfb)
+      - name: Set up Virtual Display
+        run: |
+          sudo apt-get install -y xvfb
+          Xvfb :99 -screen 0 1024x768x24 &
+          echo "DISPLAY=:99" >> $GITHUB_ENV
+
+      # Make Gradle Wrapper Executable
+      - name: Make Gradle Wrapper Executable
+        run: chmod +x ./gradlew
+
+      # Wait for RabbitMQ Service
+      - name: Wait for RabbitMQ
+        run: |
+          SECONDS=0
+          while ! curl -s http://localhost:15672 > /dev/null; do
+            if [ $SECONDS -gt 120 ]; then
+              echo "RabbitMQ service did not start within 2 minutes."
+              exit 1
+            fi
+            echo "Waiting for RabbitMQ to be ready..."
+            sleep 2
+          done
+
+      # Wait for MongoDB Service
+      - name: Wait for MongoDB
+        run: |
+          SECONDS=0
+          while ! nc -z localhost 27017; do
+            if [ $SECONDS -gt 120 ]; then
+              echo "MongoDB did not start within 2 minutes."
+              exit 1
+            fi
+            echo "Waiting for MongoDB to be ready..."
+            sleep 2
+          done
+
+      # Build and Test
+      - name: Run Gradle Build and Tests
+        run: ./gradlew clean build test --scan --stacktrace
+        env:
+          JAVA_OPTS: "-Djava.awt.headless=true"
+
+      # Upload Test Reports
+      - name: Upload Test Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: Test-Reports
+          path: '**/build/reports/tests/**'
+          retention-days: 30
+
+
+      # Generate JavaDoc
+      - name: Generate JavaDoc
+        run: gradle javadoc
+
+      # Upload JavaDocs for Each Module
+      - name: Save ClientCustomer JavaDoc
+        uses: actions/upload-artifact@v4.3.1
+        with:
+          name: ClientCustomer-JavaDoc
+          path: 'ClientCustomer/build/docs/javadoc/**'
+          retention-days: 30
+      - name: Save ClientMo JavaDoc
+        uses: actions/upload-artifact@v4.3.1
+        with:
+          name: ClientMo-JavaDoc
+          path: 'ClientMo/build/docs/javadoc/**'
+          retention-days: 30
+      - name: Save ClientPeo JavaDoc
+        uses: actions/upload-artifact@v4.3.1
+        with:
+          name: ClientPeo-JavaDoc
+          path: 'ClientPeo/build/docs/javadoc/**'
+          retention-days: 30
+      - name: Save Common JavaDoc
+        uses: actions/upload-artifact@v4.3.1
+        with:
+          name: Common-JavaDoc
+          path: 'Common/build/docs/javadoc/**'
+          retention-days: 30
+      - name: Save Database JavaDoc
+        uses: actions/upload-artifact@v4.3.1
+        with:
+          name: Database-JavaDoc
+          path: 'Database/build/docs/javadoc/**'
+          retention-days: 30
+      - name: Save Server JavaDoc
+        uses: actions/upload-artifact@v4.3.1
+        with:
+          name: Server-JavaDoc
+          path: 'Server/build/docs/javadoc/**'
+          retention-days: 30
+      - name: Save ParkingRecommender JavaDoc
+        uses: actions/upload-artifact@v4.3.1
+        with:
+          name: ParkingRecommender-JavaDoc
+          path: 'ParkingRecommender/build/docs/javadoc/**'
+          retention-days: 30
+
+
+
+
+      # Upload Build Artifacts
+      - name: Save JAR Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: JARs
+          path: '**/build/libs/*.jar'
+          retention-days: 30

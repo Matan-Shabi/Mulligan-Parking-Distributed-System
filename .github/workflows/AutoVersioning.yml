@@ -1,0 +1,66 @@
+name: Auto Versioning
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    if: false # Temporarily disables this job
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '19'
+          distribution: 'liberica'
+
+      # Step 1: Auto Versioning for Specific Directories
+      - name: Auto Versioning for Specific Directories
+        run: |
+          # Define directories to monitor
+          DIRECTORIES=("ClientCustomer" "ClientMo" "ClientPeo" "Common" "Server" "Database" "ParkingRecommender")
+
+          # Only consider the most recent commit
+          CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD | grep -E '(\.java$|\.fxml$|\.sql$)' | grep -E "^($(IFS='|'; echo "${DIRECTORIES[*]}"))")
+
+          for FILE in $CHANGED_FILES; do
+            # Update file version for each file type
+            FILE_EXT="${FILE##*.}"
+            FILE_VERSION="1.0.0"
+
+            # Logic to determine new version (simplified)
+            if grep -q '@version' "$FILE"; then
+              CURRENT_VERSION=$(grep -o '@version [0-9.]\+' "$FILE" | awk '{print $2}')
+              IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
+              minor=$((minor + 1))
+              FILE_VERSION="$major.$minor.0"
+            fi
+
+            # Update the version in the file
+            case $FILE_EXT in
+              java|fxml|sql)
+                sed -i "s/@version [0-9.]\+/@version $FILE_VERSION/" "$FILE" || {
+                  echo "Adding version tag to $FILE"
+                  echo -e "\n/** @version $FILE_VERSION */" >> "$FILE"
+                }
+                ;;
+            esac
+
+            git add "$FILE"
+          done
+
+      # Step 2: Commit Version Changes
+      - name: Commit Version Changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git commit -m "Update versions for changed files" || echo "No version changes to commit"
+          git push origin HEAD:${GITHUB_REF}
